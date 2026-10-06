@@ -19,13 +19,14 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 
 
-const halamanLoginHTML = `
+function getHalamanLoginHTML() {
+    return `
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WiFi Login Portal</title>
+    <title>${SSID} - WiFi Login Portal</title>
     <style>
         body { font-family: Arial, sans-serif; background-color: #f4f4f9; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
         .login-container { background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; width: 300px; }
@@ -47,13 +48,13 @@ const halamanLoginHTML = `
 <body>
     <div class="login-container" id="boxPortal">
         <img src="/wifi_logo.png" alt="Wi-Fi Logo" style="width: 70px; height: 70px; margin-bottom: 10px; border-radius: 12px;">
-        <h2>My Republik</h2>
+        <h2>${SSID}</h2>
         <p style="font-size: 14px; color: #666;">Verifikasi keamanan. Ketik ulang kode captcha di bawah untuk melanjutkan akses internet.</p>
         
         <!-- Area Tampilan Captcha -->
         <div class="captcha-box">
             <div class="captcha-code" id="displayCaptcha">4 X m 2 Y</div>
-            <button type="button" class="btn-refresh" onclick="buatCaptcha Baru()" title="Ganti Kode">🔄</button>
+            <button type="button" class="btn-refresh" onclick="buatCaptchaBaru()" title="Ganti Kode">🔄</button>
         </div>
 
         <form id="formLogin" onsubmit="kirimFormAJAX(event)">
@@ -61,7 +62,7 @@ const halamanLoginHTML = `
             <div class="error-msg" id="errorMsg">Kode captcha tidak sesuai!</div>
             <button type="submit">Hubungkan</button>
         </form>
-        <div class="footer">&copy; 2026 my republik</div>
+        <div class="footer">&copy; 2026 ${SSID}</div>
     </div>
 
     <script>
@@ -96,6 +97,7 @@ const halamanLoginHTML = `
 </body>
 </html>
 `;
+}
 
 
 app.get('/selected_sound', (req, res) => {
@@ -121,7 +123,7 @@ captiveEndpoints.forEach(endpoint => {
 });
 
 app.get('/', (req, res) => {
-    res.send(halamanLoginHTML);
+    res.send(getHalamanLoginHTML());
 });
 app.post('/login', (req, res) => {
     const { username, password } = req.body;
@@ -194,6 +196,16 @@ function jalankanHttpServer() {
 
 
 function jalankanDnsServer() {
+    try {
+        console.log("[INFO] Mencoba membebaskan port 53 dari SharedAccess...");
+        // Menjalankan PowerShell cmdlets dari Node.js
+        execSync('powershell -Command "Stop-Service -Name SharedAccess -Force -ErrorAction SilentlyContinue"');
+        execSync('powershell -Command "Set-Service -Name SharedAccess -StartupType Disabled -ErrorAction SilentlyContinue"');
+        console.log("[+] SharedAccess berhasil dimatikan.");
+    } catch (error) {
+        console.warn("[PERINGATAN] Gagal mematikan SharedAccess otomatis. Pastikan terminal dijalankan sebagai ADMINISTRATOR.");
+    }
+    
     dnsServerInstance = dgram.createSocket('udp4');
 
     dnsServerInstance.on('message', (msg, rinfo) => {
@@ -244,6 +256,25 @@ function jalankanDnsServer() {
 function bersihkanDanKeluar() {
     console.log("\n\n[!] Menerima sinyal Ctrl+C... Mematikan server & membebaskan seluruh port...");
     
+    // 1. MATIKAN WIFI / MOBILE HOTSPOT WINDOWS
+    try {
+        console.log("[INFO] Mencoba mematikan WiFi Hotspot...");
+        
+        // Opsi A: Jika Anda menggunakan Mobile Hotspot bawaan Windows 10/11 (Modern)
+        execSync('powershell -Command "SubsystemAppConfig = Get-NetAdapter; $hotspot = New-Object -ComObject WNetShare; # atau menggunakan perintah UWP jika lewat script khusus" -ErrorAction SilentlyContinue'); 
+        
+        // Opsi B: Jika Anda mengaktifkan WiFi menggunakan perintah Netsh Hosted Network (Cara Klasik)
+        execSync('netsh wlan stop hostednetwork', { stdio: 'ignore' });
+        
+        // Opsi C: Cara paling ampuh untuk mematikan Mobile Hotspot modern via PowerShell
+        execSync('powershell -Command " $msh = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager, Windows.Networking.NetworkOperators, ContentType = WindowsRuntime]::CreateFromConnectionProfile(([Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType = WindowsRuntime]::GetInternetConnectionProfile())); $msh.StopTetheringAsync() "', { stdio: 'ignore' });
+
+        console.log("[+] WiFi \"WiFi Gratis\" berhasil dimatikan.");
+    } catch (e) {
+        console.warn("[-] Gagal mematikan WiFi otomatis secara sistemik, silakan matikan manual via Windows Setting.");
+    }
+
+    // 2. MATIKAN HTTP SERVER
     if (httpServerInstance) {
         try {
             httpServerInstance.close();
@@ -251,6 +282,7 @@ function bersihkanDanKeluar() {
         } catch (e) {}
     }
 
+    // 3. MATIKAN DNS SERVER
     if (dnsServerInstance) {
         try {
             dnsServerInstance.close();
@@ -259,9 +291,9 @@ function bersihkanDanKeluar() {
     }
 
     setTimeout(() => {
-        console.log("[+] Seluruh port dan layanan berhasil dibebaskan. Program selesai.");
+        console.log("[+] Seluruh port, layanan, dan WiFi berhasil dibebaskan. Program selesai.");
         process.exit(0);
-    }, 500);
+    }, 800); // Menaikkan sedikit timeout agar proses internal Windows selesai mematikan WiFi
 }
 
 process.on('SIGINT', bersihkanDanKeluar);
@@ -360,7 +392,31 @@ try {
 }
 
 
+function tampilkanBanner() {
+    const RED = '\x1b[91m';
+    const RESET = '\x1b[0m';
+    const BOLD = '\x1b[1m';
+
+    const banner = `${RED}${BOLD}
+  .---------------------------------------------------------------------------------------------------.
+  |                                                                                                   |
+  |     .---.     /--------\\   ██╗  ██╗██╗███████╗██╗    ██████╗ ██████╗  █████╗ ███╗   ██╗██╗  ██╗   |
+  |   .'     '.  /  .-.  .-.\\  ██║  ██║██║██╔════╝██║    ██╔══██╗██╔══██╗██╔══██╗████╗  ██║██║ ██╔╝   |
+  |  /   .---. \\| ( o )( o )|  ██║  ██║██║█████╗  ██║    ██████╔╝██████╔╝███████║██╔██╗ ██║█████═╝    |
+  |  \\ (   ●   ) |  /\\/\\   |  ╚██╗██╔╝██║██╔══╝  ██║    ██╔═══╝ ██╔══██╗██╔══██║██║╚██╗██║██╔═██╗   |
+  |   ' \\     /  |  \\____/  |   ╚████╔╝ ██║██║     ██║    ██║     ██║  ██║██║  ██║██║ ╚████║██║  ██╗   |
+  |      '---'    \\________/    ╚═══╝  ╚═╝╚═╝     ╚═╝    ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝   |
+  |                                                                                                   |
+  |                                                                   -- by mances --                 |
+  |                                                                                                   |
+  '---------------------------------------------------------------------------------------------------'
+${RESET}`;
+    console.log(banner);
+}
+
 function mintaKonfigurasiDanJalankan() {
+    tampilkanBanner();
+
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
@@ -409,3 +465,4 @@ function mintaKonfigurasiDanJalankan() {
 }
 
 mintaKonfigurasiDanJalankan();
+//jalan manual=Stop-Service -Name "SharedAccess" -Force; Set-Service -Name "SharedAccess" -StartupType Disabled
